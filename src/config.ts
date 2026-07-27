@@ -7,6 +7,9 @@ const INTERNAL_HOST = process.env.RCP_INFER_HOST ?? "https://inference.rcp.epfl.
 /** External host (off-VPN): /v1/models + chat completions only. */
 const EXTERNAL_HOST = process.env.RCP_INFER_EXT_HOST ?? "https://inference-rcp.epfl.ch"
 
+/** RCP portal: serves the live models-status endpoint (portal ≥ 1.8.2). */
+const PORTAL_HOST = process.env.RCP_PORTAL_HOST ?? "https://portal.rcp.epfl.ch"
+
 export const config = {
   apiKey: process.env.EPFL_RCP_API_KEY ?? "",
 
@@ -18,19 +21,22 @@ export const config = {
     modelInfo: process.env.RCP_MODELINFO_URL ?? `${INTERNAL_HOST}/v1/model/info`,
     /** Id-only catalog — external host, reachable off-VPN. */
     models: `${EXTERNAL_HOST}/v1/models`,
-    /** Chat completions, used for readiness probes — external host. */
-    chat: `${EXTERNAL_HOST}/v1/chat/completions`,
+    /** Live per-model status (ready/loading/down/error) — portal, inference-key auth. */
+    status: process.env.RCP_STATUS_URL ?? `${PORTAL_HOST}/aiaas/api/v1/models-status`,
   },
 
   timeouts: {
     /** Catalog fetch timeout. */
     catalogMs: 8_000,
-    /** Per-favorite readiness probe: a fast 200 means warm, a timeout means cold. */
-    probeMs: 5_000,
+    /** Status fetch timeout; the portal serves it from a Redis cache, so it is fast. */
+    statusMs: 6_000,
   },
 
   /** Catalog refresh interval; metadata only, so no model loads are triggered. */
   refreshMs: 60_000,
+
+  /** Status refresh interval; the portal itself refreshes from Prometheus every ~15 s. */
+  statusRefreshMs: 20_000,
 
   /** Sidebar display-name width (characters). */
   truncWidth: 22,
@@ -40,7 +46,7 @@ export const config = {
 } as const
 
 /**
- * Models pinned to the top, probed for readiness, and reachable by one-click switch.
+ * Models pinned to the top of the sidebar and reachable by one-click switch.
  * These must also be present in opencode's own favorites (see README) for the
  * click-to-switch to work.
  */

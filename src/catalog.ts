@@ -1,4 +1,5 @@
-// Model catalog: fetching, normalising into rows, and readiness probing.
+// Model catalog: fetching model metadata and normalising it into display rows.
+// Live status lives in ./status.
 
 import { config, FAVORITES, VARIANT_SUFFIX } from "./config"
 import type { CatalogResult, Pool, Row } from "./types"
@@ -20,14 +21,18 @@ export const isFavorite = (row: Row): boolean => Number.isFinite(row.rank)
 // --- catalog normalisation --------------------------------------------------
 
 /** Shape of the `model_info` object from the rich `/v1/model/info` endpoint. */
-type ModelInfo = {
+export type ModelInfo = {
   input_cost_per_token?: number
   output_cost_per_token?: number
   rcp_portal_labels?: string[]
   mode?: string
+  /** Context window; LiteLLM reports either of these depending on the model. */
+  max_tokens?: number
+  max_input_tokens?: number
+  max_output_tokens?: number
 }
 
-type CatalogEntry = { name: string; info: ModelInfo }
+export type CatalogEntry = { name: string; info: ModelInfo }
 
 const perMillion = (n: number): string => (n * 1e6).toFixed(2)
 
@@ -101,6 +106,18 @@ const dataArray = (json: unknown): Array<Record<string, unknown>> | undefined =>
 }
 
 /**
+ * Raw entries from the rich internal endpoint (cost, limits, mode), or undefined
+ * when it is unreachable. Used by the catalog below and by the opencode.json sync.
+ */
+export async function fetchModelInfo(): Promise<CatalogEntry[] | undefined> {
+  const rich = dataArray(await fetchJson(config.urls.modelInfo))
+  return rich?.map((m) => ({
+    name: String(m.model_name ?? ""),
+    info: (m.model_info ?? {}) as ModelInfo,
+  }))
+}
+
+/**
  * Load the model catalog. Tries the rich internal endpoint first (cost/pool),
  * then falls back to the id-only external endpoint, which works off-VPN but
  * without cost/pool metadata.
@@ -108,11 +125,8 @@ const dataArray = (json: unknown): Array<Record<string, unknown>> | undefined =>
 export async function fetchCatalog(): Promise<CatalogResult> {
   if (!config.apiKey) return { ok: false, reason: "EPFL_RCP_API_KEY not set" }
 
-  const rich = dataArray(await fetchJson(config.urls.modelInfo))
-  if (rich) {
-    const entries = rich.map((m) => ({ name: String(m.model_name ?? ""), info: (m.model_info ?? {}) as ModelInfo }))
-    return { ok: true, rows: buildRows(entries) }
-  }
+  const entries = await fetchModelInfo()
+  if (entries) return { ok: true, rows: buildRows(entries) }
 
   const plain = dataArray(await fetchJson(config.urls.models))
   if (plain) {
@@ -121,24 +135,4 @@ export async function fetchCatalog(): Promise<CatalogResult> {
   }
 
   return { ok: false, reason: "unreachable (clé ? réseau ?)" }
-}
-
-// --- readiness probe --------------------------------------------------------
-
-/**
- * Latency probe for a single model: a fast 200 means it is warm, a timeout means
- * it is cold (and the request itself nudges the model to start loading).
- */
-export async function probeModel(name: string): Promise<boolean> {
-  try {
-    const res = await fetch(config.urls.chat, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: name, messages: [{ role: "user", content: "ping" }], max_tokens: 1 }),
-      signal: AbortSignal.timeout(config.timeouts.probeMs),
-    })
-    return res.ok
-  } catch {
-    return false
-  }
 }

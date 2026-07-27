@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "opencode-rcp-status",
+      "name": "opencode-rcp-model",
       "dependencies": {
         "@opencode-ai/plugin": "^1.4.3",
         "@opentui/core": "^0.2.2",

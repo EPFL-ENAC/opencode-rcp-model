@@ -2,14 +2,14 @@
 // Left/right cycles the filter; tab cycles the sort.
 
 import { isFavorite } from "./catalog"
-import type { Readiness, Row } from "./types"
+import type { Row } from "./types"
 import { compareNumbers } from "./util"
 
 export type Filter = {
   label: string
   /** Message shown when the filter matches nothing. */
   empty: string
-  match: (row: Row, readiness: Record<string, Readiness>) => boolean
+  match: (row: Row) => boolean
 }
 
 export const FILTERS: Filter[] = [
@@ -17,9 +17,10 @@ export const FILTERS: Filter[] = [
   { label: "favoris", empty: "aucun favori", match: (row) => isFavorite(row) },
   {
     label: "prêts",
-    empty: "aucun favori prêt — seuls les favoris sont sondés",
-    match: (row, readiness) => readiness[row.name] === "warm",
+    empty: "aucun modèle prêt — statut indisponible ?",
+    match: (row) => row.readiness === "ready",
   },
+  { label: "24/7", empty: "aucun modèle 24/7 — statut indisponible ?", match: (row) => row.isAlwaysUp === true },
   { label: "gratuits", empty: "aucun modèle basic — pool inconnu hors VPN", match: (row) => row.pool === "basic" },
   { label: "premium", empty: "aucun modèle premium — pool inconnu hors VPN", match: (row) => row.pool === "premium" },
 ]

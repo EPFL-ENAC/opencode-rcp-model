@@ -1,23 +1,44 @@
 // Reactive state shared by the sidebar widget and the /rcpmodel dialog.
 
 import { createSignal } from "solid-js"
-import { config, FAVORITES } from "./config"
-import { fetchCatalog, probeModel, shortName } from "./catalog"
+import { config } from "./config"
+import { fetchCatalog, shortName } from "./catalog"
+import { fetchStatuses, statusFor } from "./status"
 import {
   activeModel,
   cyclableFavorites,
+  cyclableRecents,
+  isDeclared,
   runCommand,
   sameModel,
   waitForActiveChange,
 } from "./switching"
-import type { ModelRef, RcpApi, Readiness, Row } from "./types"
+import type { ModelRef, ModelStatus, RcpApi, Row } from "./types"
+
+/** Failed status polls tolerated before the displayed statuses are cleared. */
+const STATUS_FAILURES_BEFORE_CLEAR = 2
 
 export function createRcpState(api: RcpApi) {
-  const [rows, setRows] = createSignal<Row[]>([])
+  const [baseRows, setBaseRows] = createSignal<Row[]>([])
   const [note, setNote] = createSignal("loading…")
-  const [readiness, setReadiness] = createSignal<Record<string, Readiness>>({})
+  const [statuses, setStatuses] = createSignal<Record<string, ModelStatus>>({})
+  const [statusNote, setStatusNote] = createSignal("")
   const [current, setCurrent] = createSignal<string | undefined>(undefined) // active RCP model id
   const [switching, setSwitching] = createSignal<string | undefined>(undefined)
+
+  /**
+   * Catalog rows with the live status merged in; the only rows the UI ever sees.
+   * A plain derived accessor rather than a memo: this state is built outside any
+   * reactive root, where a computation would never be disposed. Consumers all
+   * memoize on their own side, and the list is short.
+   */
+  const rows = (): Row[] => {
+    const live = statuses()
+    return baseRows().map((row) => {
+      const status = statusFor(row.name, live)
+      return { ...row, readiness: status?.status ?? "unknown", isAlwaysUp: status?.isAlwaysUp }
+    })
+  }
 
   const toast = (message: string, variant: "info" | "success" | "warning" | "error" = "info") =>
     api.ui.toast({ message, variant, duration: 3000 })
@@ -35,7 +56,7 @@ export function createRcpState(api: RcpApi) {
   const loadCatalog = async () => {
     const result = await fetchCatalog()
     if (result.ok) {
-      setRows(result.rows)
+      setBaseRows(result.rows)
       setNote(result.warning ?? "")
     } else {
       setNote(result.reason)
@@ -43,46 +64,72 @@ export function createRcpState(api: RcpApi) {
     refreshCurrent()
   }
 
-  let probing = false
-  const probeFavorites = async () => {
-    if (!config.apiKey || probing) return
-    probing = true
-    setReadiness(Object.fromEntries(FAVORITES.map((name) => [name, "checking"])))
+  let statusInFlight = false
+  let statusFailures = 0
+  /**
+   * Refresh the live statuses. A single failed poll keeps the last known values
+   * (they are at most a few tens of seconds old) so the dots do not flicker; the
+   * note appears immediately, and the statuses are dropped once failures persist.
+   */
+  const loadStatuses = async () => {
+    if (statusInFlight) return
+    statusInFlight = true
     try {
-      await Promise.all(
-        FAVORITES.map(async (name) => {
-          const warm = await probeModel(name)
-          setReadiness((prev) => ({ ...prev, [name]: warm ? "warm" : "cold" }))
-        }),
-      )
+      const result = await fetchStatuses()
+      if (result.ok) {
+        statusFailures = 0
+        setStatuses(result.statuses)
+        setStatusNote("")
+      } else {
+        statusFailures++
+        setStatusNote(result.reason)
+        if (statusFailures >= STATUS_FAILURES_BEFORE_CLEAR) setStatuses({})
+      }
     } finally {
-      probing = false
+      statusInFlight = false
     }
   }
 
   /**
    * Switch the active model by cycling opencode's favorite ring until model.json's
-   * recent[0] matches the target. Models not in opencode's favorites can't be
-   * reached this way, so we open the native picker for those instead.
+   * recent[0] matches the target. There is no "set active model" call in the plugin
+   * API, so the ring is the only lever; a target that is missing from it gets added
+   * to opencode's favorites first.
    */
   const switchTo = async (name: string) => {
     if (switching()) return
     if (current() === name) return void toast(`${shortName(name)} déjà actif`)
 
     const target: ModelRef = { providerID: config.providerId, modelID: name }
-    const ring = cyclableFavorites(api)
-    if (!ring.some((fav) => sameModel(fav, target))) {
-      toast(`${shortName(name)} n'est pas dans les favoris opencode — ajoute-le via le picker`, "warning")
+
+    // No favorite trick can help a model opencode's config never declared.
+    if (!isDeclared(api, target)) {
+      toast(`${shortName(name)} n'est pas déclaré dans opencode.json — ajoute-le à la config`, "error")
+      return
+    }
+
+    // Two rings can be walked from here. Prefer favorites (short and stable);
+    // fall back to the recent ring, which reaches anything used before.
+    const favorites = cyclableFavorites(api)
+    const recents = cyclableRecents(api)
+    const inFavorites = favorites.some((fav) => sameModel(fav, target))
+    const inRecents = recents.some((ref) => sameModel(ref, target))
+
+    if (!inFavorites && !inRecents) {
+      toast(`${shortName(name)} : choisis-le une fois ici, ensuite le clic suffira`, "warning")
       runCommand(api, "model.list")
       return
     }
 
+    const command = inFavorites ? "model.cycle_favorite" : "model.cycle_recent"
+    const ring = inFavorites ? favorites : recents
+
     setSwitching(name)
     try {
       let previous = activeModel(api)
-      // One extra step so we can visit every favorite before giving up.
+      // One extra step so we can visit every entry in the ring before giving up.
       for (let step = 0; step <= ring.length; step++) {
-        runCommand(api, "model.cycle_favorite")
+        runCommand(api, command)
         const active = await waitForActiveChange(api, previous)
         if (sameModel(active, target)) {
           setCurrent(name)
@@ -91,13 +138,14 @@ export function createRcpState(api: RcpApi) {
         previous = active
       }
       toast(`Impossible de basculer sur ${shortName(name)}`, "error")
+      runCommand(api, "model.list")
       refreshCurrent()
     } finally {
       setSwitching(undefined)
     }
   }
 
-  return { rows, note, readiness, current, switching, loadCatalog, probeFavorites, switchTo }
+  return { rows, note, statusNote, current, switching, loadCatalog, loadStatuses, switchTo }
 }
 
 export type RcpState = ReturnType<typeof createRcpState>

@@ -44,13 +44,39 @@ export function runCommand(api: RcpApi, value: string): void {
   else api.keymap?.dispatchCommand?.(value) // opencode >= 1.4
 }
 
+/**
+ * True when opencode's own config declares this model. Undeclared models cannot
+ * be selected at all — the cycler skips them — no matter what the favorites say.
+ */
+export function isDeclared(api: RcpApi, ref: ModelRef): boolean {
+  const provider = (api.state?.provider ?? []).find((p) => p.id === ref.providerID)
+  return Boolean(provider?.models?.[ref.modelID])
+}
+
 /** Favorites the native cycler will actually visit (it skips unknown provider/model pairs). */
 export function cyclableFavorites(api: RcpApi): ModelRef[] {
-  const providers = api.state?.provider ?? []
-  return readModelState(api).favorite.filter((fav) => {
-    const provider = providers.find((p) => p.id === fav.providerID)
-    return Boolean(provider?.models?.[fav.modelID])
-  })
+  return readModelState(api).favorite.filter((fav) => isDeclared(api, fav))
+}
+
+/**
+ * The second ring: models opencode remembers you using. `model.cycle_recent`
+ * walks it just like the favorite cycler, so anything listed here is reachable
+ * without touching opencode's favorites.
+ */
+export function cyclableRecents(api: RcpApi): ModelRef[] {
+  return readModelState(api).recent.filter((ref) => isDeclared(api, ref))
+}
+
+/**
+ * The rings a click can actually reach. Adding to them from here is impossible:
+ * opencode holds both lists in memory and rewrites model.json from its own copy,
+ * so an external write is silently discarded. Anything outside these has to go
+ * through the native picker once, which lands it in `recent` for next time.
+ */
+export function cyclableModels(api: RcpApi): ModelRef[] {
+  const favorites = cyclableFavorites(api)
+  const extras = cyclableRecents(api).filter((ref) => !favorites.some((fav) => sameModel(fav, ref)))
+  return [...favorites, ...extras]
 }
 
 /**

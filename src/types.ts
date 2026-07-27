@@ -2,7 +2,11 @@
 
 export type Pool = "basic" | "premium" | "unknown"
 
-export type Readiness = "warm" | "cold" | "checking" | "unknown"
+/** Live model state as reported by the portal's models-status endpoint. */
+export type Readiness = "ready" | "loading" | "down" | "error" | "unknown"
+
+/** One entry of the models-status payload, normalised. */
+export type ModelStatus = { status: Readiness; isAlwaysUp: boolean }
 
 /** A model catalog entry, ready for display. */
 export type Row = {
@@ -17,10 +21,20 @@ export type Row = {
   cost: string
   /** Combined in+out per-1M price, used for sorting; undefined when unknown. */
   price?: number
+  /** LiteLLM mode ("completion", "embedding", …); used to keep chat models only. */
+  mode?: string
+  /** Live status; unset on freshly-fetched catalog rows, filled in by the merge. */
+  readiness?: Readiness
+  /** True for models pinned 24/7, false/undefined for autoscaled ones. */
+  isAlwaysUp?: boolean
 }
 
 export type CatalogResult =
   | { ok: true; rows: Row[]; warning?: string }
+  | { ok: false; reason: string }
+
+export type StatusResult =
+  | { ok: true; statuses: Record<string, ModelStatus> }
   | { ok: false; reason: string }
 
 /** A provider/model pair as stored in opencode's model.json. */
@@ -33,7 +47,7 @@ export type ModelRef = { providerID: string; modelID: string }
  */
 export type RcpApi = {
   state?: {
-    path?: { state?: string }
+    path?: { state?: string; config?: string }
     provider?: Array<{ id: string; models?: Record<string, unknown> }>
     config?: { model?: string }
   }

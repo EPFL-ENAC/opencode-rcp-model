@@ -1,7 +1,7 @@
 {
-  "name": "opencode-rcp-status",
-  "version": "0.2.0",
-  "description": "OpenCode TUI plugin for EPFL RCP AIaaS models: sidebar widget + /rcpmodel picker with readiness, pool, price, and one-click switch.",
+  "name": "opencode-rcp-model",
+  "version": "0.3.0",
+  "description": "OpenCode TUI plugin for EPFL RCP AIaaS models: sidebar widget + /rcpmodel picker with live status, pool, price, and one-click switch.",
   "type": "module",
   "exports": {
     "./tui": "./tui.tsx"
@@ -20,7 +20,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/EPFL-ENAC/opencode-rcp-status.git"
+    "url": "https://github.com/EPFL-ENAC/opencode-rcp-model.git"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

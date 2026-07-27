@@ -9,7 +9,7 @@ import { useKeyboard } from "@opentui/solid"
 import { TextAttributes } from "@opentui/core"
 import { config } from "./config"
 import { isFavorite } from "./catalog"
-import { cyclableFavorites } from "./switching"
+import { cyclableModels } from "./switching"
 import { FILTERS, SORTS } from "./filters"
 import type { RcpApi, Readiness, Row } from "./types"
 import type { RcpState } from "./state"
@@ -18,8 +18,13 @@ import type { RcpState } from "./state"
 const RETRY = "__retry"
 const EMPTY = "__none"
 
-const readinessLabel = (readiness: Readiness | undefined): string =>
-  readiness === "warm" ? "● prêt" : readiness === "cold" ? "○ froid" : readiness === "checking" ? "· test…" : ""
+const STATUS_LABEL: Record<Readiness, string> = {
+  ready: "● prêt",
+  loading: "◐ démarrage",
+  down: "○ arrêté",
+  error: "✗ erreur",
+  unknown: "",
+}
 
 type Theme = () => Record<string, string>
 
@@ -54,7 +59,8 @@ function describeRow(row: Row, state: RcpState, switchable: Set<string>): string
   return [
     row.pool === "unknown" ? "" : row.pool,
     row.cost ? `${row.cost} CHF/1M` : "",
-    isFavorite(row) ? readinessLabel(state.readiness()[row.name]) : "",
+    STATUS_LABEL[row.readiness ?? "unknown"],
+    row.isAlwaysUp ? "24/7" : "",
     row.name === state.current() ? "actif" : "",
     switchable.has(row.name) ? "" : "→ picker natif",
   ]
@@ -97,12 +103,13 @@ export function RcpDialog(props: { api: RcpApi; state: RcpState }) {
   const options = createMemo(() => {
     // Surface a fetch error instead of a silent "No results found".
     if (!state.rows().length) {
-      return [{ title: `⚠ ${state.note() || "chargement…"}`, value: RETRY, description: "Entrée pour réessayer", category: "RCP" }]
+      const reason = state.note() || state.statusNote() || "chargement…"
+      return [{ title: `⚠ ${reason}`, value: RETRY, description: "Entrée pour réessayer", category: "RCP" }]
     }
 
     const filter = FILTERS[filterIndex()]
     const sort = SORTS[sortIndex()]
-    const matching = state.rows().filter((row) => filter.match(row, state.readiness()))
+    const matching = state.rows().filter((row) => filter.match(row))
     const sorted = [...matching].sort(sort.compare)
 
     // Never return an empty list: a placeholder keeps the tab bar reachable.
@@ -112,7 +119,7 @@ export function RcpDialog(props: { api: RcpApi; state: RcpState }) {
 
     const isDefaultView = filterIndex() === 0 && sortIndex() === 0
     const switchable = new Set(
-      cyclableFavorites(props.api)
+      cyclableModels(props.api)
         .filter((ref) => ref.providerID === config.providerId)
         .map((ref) => ref.modelID),
     )
@@ -126,7 +133,11 @@ export function RcpDialog(props: { api: RcpApi; state: RcpState }) {
 
   const onSelect = (option: { value: string }) => {
     if (option.value === EMPTY) return
-    if (option.value === RETRY) return void state.loadCatalog()
+    if (option.value === RETRY) {
+      void state.loadCatalog()
+      void state.loadStatuses()
+      return
+    }
     props.api.ui.dialog.clear()
     void state.switchTo(option.value)
   }
@@ -143,7 +154,11 @@ export function RcpDialog(props: { api: RcpApi; state: RcpState }) {
           <DialogSelect
             title="RCP models"
             keybind={keybinds}
-            placeholder={state.note() ? `⚠ ${state.note()}` : "Filtrer… (◂ ▸ filtre · ⇥ tri · clic sur les onglets)"}
+            placeholder={
+              state.note() || state.statusNote()
+                ? `⚠ ${state.note() || state.statusNote()}`
+                : "Filtrer… (◂ ▸ filtre · ⇥ tri · clic sur les onglets)"
+            }
             current={state.current()}
             options={options()}
             onSelect={onSelect}
