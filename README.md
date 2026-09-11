@@ -24,7 +24,7 @@ Requires opencode ≥ 1.3 and an EPFL RCP inference key.
 
 1. Clone this repo somewhere stable and install its dependencies:
    ```sh
-   git clone https://github.com/EPFL-ENAC/opencode-rcp-status.git
+   git clone https://github.com/EPFL-ENAC/opencode-rcp-model.git
    cd opencode-rcp-status && bun install
    ```
 2. Register it in `~/.config/opencode/tui.json` (create the file if needed):
