@@ -1,6 +1,6 @@
 # opencode-rcp-status
 
-An [OpenCode](https://opencode.ai) TUI plugin for **EPFL RCP AIaaS** chat models. It adds:
+An [OpenCode](https://opencode.ai) **V2** TUI plugin for **EPFL RCP AIaaS** chat models. It adds:
 
 - a **sidebar widget** — favorites first with readiness ●/○, pool (P/B), per-1M cost, an
   active-model marker (▸), and click-to-switch;
@@ -20,17 +20,20 @@ An [OpenCode](https://opencode.ai) TUI plugin for **EPFL RCP AIaaS** chat models
 
 ## Install
 
-Requires opencode ≥ 1.3 and an EPFL RCP inference key.
+Requires **OpenCode 2** and an EPFL RCP inference key.
 
 1. Clone this repo somewhere stable and install its dependencies:
    ```sh
    git clone https://github.com/EPFL-ENAC/opencode-rcp-model.git
    cd opencode-rcp-status && bun install
    ```
-2. Register it in `~/.config/opencode/tui.json` (create the file if needed):
+2. Register it in `~/.config/opencode/cli.json` (create the file if needed). V2 loads TUI-only
+   plugin packages from the `plugins` list:
    ```json
-   { "plugin": ["/absolute/path/to/opencode-rcp-status"] }
+   { "plugins": ["/absolute/path/to/opencode-rcp-model"] }
    ```
+   The directory's `package.json` `exports` (`./tui`) is what OpenCode loads; a local path must
+   name the directory, not a file.
 3. Export your key in the shell that launches opencode:
    ```sh
    export EPFL_RCP_API_KEY="sk-..."
@@ -38,7 +41,8 @@ Requires opencode ≥ 1.3 and an EPFL RCP inference key.
 4. For one-click switching, add the models you switch between to opencode's own favorites via the
    native picker (`/models`, then favorite them). See *Click-to-switch* below.
 
-Restart opencode. The sidebar appears automatically; type `/rcpmodel` to open the picker.
+Config changes apply without a restart; to force a full reload use `/reload`. The sidebar appears
+automatically; type `/rcpmodel` to open the picker.
 
 ## `/rcpmodel` dialog
 
@@ -54,15 +58,18 @@ An empty filter never dead-ends: a placeholder row keeps the tab bar reachable. 
 can't be fetched, the dialog shows the error with an Enter-to-retry row instead of a silent
 "No results found".
 
+The dialog is built from OpenTUI primitives (V2 no longer exposes a host `DialogSelect` component
+to plugins). It reuses the built-in `dialog.select.*` keymap commands, so your own keybinds for
+↑/↓/Enter apply, and escape closes it like any dialog.
+
 ## Click-to-switch: how it works (and its limits)
 
-The plugin API has no direct model setter, and `client.session.prompt({ model })` is overridden by
-the TUI's locally-owned active model. But `command.trigger("model.cycle_favorite")` runs the same
-internal command as the native favorite-cycle keybind — which *does* set the active model and
-persists it to `<state>/model.json` (`recent[0]` = active model). So a switch:
+The TUI plugin API has no direct model setter. But `keymap.dispatch("model.cycle_favorite")` runs
+the same internal command as the native favorite-cycle keybind — which *does* set the active model
+and persists it to `<state>/model.json` (`recent[0]` = active model). So a switch:
 
 1. reads opencode's favorites from `model.json`;
-2. triggers `model.cycle_favorite` repeatedly, checking `recent[0]` after each step;
+2. triggers `model.cycle_favorite` repeatedly, checking the live selection after each step;
 3. stops when the target is active, then toasts `Modèle → <name>`.
 
 **Limit:** only models present in **opencode's own favorites** are reachable. Clicking a
@@ -88,16 +95,16 @@ endpoint.
 ## Project layout
 
 ```
-tui.tsx            entry point: wires state + sidebar slot + /rcpmodel command
+tui.tsx            entry point: Plugin.define wires state + sidebar slot + /rcpmodel command
 src/
   config.ts        endpoints, timeouts, FAVORITES, tuning (env-overridable)
-  types.ts         shared types incl. the RcpApi surface this plugin relies on
+  types.ts         shared types incl. the V2 TUI plugin context this plugin relies on
   util.ts          small pure helpers
   catalog.ts       fetch + normalise the model catalog; readiness probe
   switching.ts     model.json access + favorite-cycle switching machinery
   state.ts         reactive state shared by the sidebar and the dialog
   filters.ts       filter/sort definitions for the dialog
-  dialog.tsx       the /rcpmodel picker (tab bar + DialogSelect)
+  dialog.tsx       the /rcpmodel picker (tab bar + input + scrollbox list)
   sidebar.tsx      the sidebar widget
 ```
 
@@ -113,13 +120,18 @@ Verify changes with `bun run typecheck` and `bun run build`.
 
 ## How it works (TUI internals)
 
-Rendered into opencode's `sidebar_content` slot via `@opencode-ai/plugin/tui` (OpenTUI + SolidJS).
-opencode aliases the plugin's `@opentui/solid` / `solid-js` imports to its own instances, so the
-plugin shares the host's Solid runtime and renderer context — reactive props cross the boundary and
-host hooks like `useKeyboard` work directly. The dialog wires its filter/sort keys both through
-`DialogSelect`'s native `keybind` prop and a fallback `useKeyboard` hook, and remounts
-`DialogSelect` (keyed `<Show>`) on mode change because its internal selected index is not clamped
-when the option list shrinks.
+A V2 TUI plugin default-exports `Plugin.define({ id, setup })` from `@opencode/plugin/tui`
+(OpenTUI + SolidJS). `setup` registers:
+
+- a claim on the `sidebar.content` slot via `context.ui.slot(...)` — rendered by opencode's own
+  OpenTUI runtime, and `usePlugin()` gives the components theme and context;
+- a `keymap.layer` command with `slash: { name: "rcpmodel", aliases: ["rcp"] }` and
+  `palette: true`, which shows a custom dialog via `context.ui.dialog.show(...)`.
+
+The picker renders its own input, category headers, and scrollbox list (see above), follows the
+host select dialog's interaction model, and scrolls the selected row into view on the next render
+frame. The active model comes from the reactive `context.ui.model.current()` — no more polling
+`model.json` for the marker; the file is still read for the favorite ring the cycler visits.
 
 ## Roadmap
 
@@ -129,10 +141,11 @@ requested from the RCP team; once it ships, `probeModel()` in `src/catalog.ts` c
 plain read of that endpoint, giving true three-state status (down / loading / ready) for *all*
 models instead of only the probed favorites.
 
-### Optional v2 (Effect) catalog plugin
-opencode's newer plugin API (v2, `@opencode-ai/plugin/dist/v2`) adds server-side **Effect** hooks,
-including a `catalog` hook that can inject and enrich the model catalog (`draft.model.update(...)`,
-`draft.model.default.set(...)`) and re-run itself with `catalog.reload()`. A small v2 plugin could:
+### Optional server-part (Effect) catalog plugin
+A V2 plugin package can also ship a **server part** (`.` export, `@opencode/plugin` server API with
+**Effect** hooks, including a `catalog` hook that can inject and enrich the model catalog
+(`draft.model.update(...)`, `draft.model.default.set(...)`) and re-run itself with
+`catalog.reload()`). A small server part could:
 
 - auto-populate the native catalog with RCP models + cost/pool from `/v1/model/info` (replacing a
   hand-maintained `opencode.json` / sync script), and
@@ -140,16 +153,14 @@ including a `catalog` hook that can inject and enrich the model catalog (`draft.
 
 **Not adopted here**, and deliberately so:
 
-- v2 is **server-side only** — it has no TUI context, so it can render neither the sidebar widget
-  nor the `/rcpmodel` dialog. It would complement, not replace, this v1 TUI plugin.
-- It requires a much newer opencode binary: the v2 loader (`readV2Plugin`, `PluginContext`, the
-  `effect` runtime) is absent from older builds (e.g. 1.3.x ships only `readV1Plugin`).
+- the server part has no TUI context, so it can render neither the sidebar widget nor the
+  `/rcpmodel` dialog. It would complement, not replace, this TUI plugin.
 - It does **not** expose an active-model setter, so it wouldn't remove the favorite-cycle switching
   workaround either.
 
-The natural time to revisit is once opencode is upgraded to a v2-capable build *and* the RCP status
-endpoint lands: a v2 `catalog` plugin would own catalog enrichment while this v1 plugin keeps the
-interactive widget/dialog. The two plugin kinds coexist without conflict.
+The natural time to revisit is once the RCP status endpoint lands: a server part would own catalog
+enrichment while this plugin keeps the interactive widget/dialog. The two plugin parts coexist in
+the same package without conflict (`.` + `./tui` exports).
 
 ## Credit
 

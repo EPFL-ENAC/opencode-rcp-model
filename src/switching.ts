@@ -1,31 +1,33 @@
 // Model switching via opencode's own favorite-cycle command.
 //
-// The plugin API has no direct "set active model" call. But `command.trigger()`
-// runs the same internal command as the native favorite-cycle keybind, which
-// persists the choice to <state>/model.json (recent[0] = active model). So to
-// switch to a target we cycle through opencode's favorites, checking recent[0]
-// after each step, until we land on it. Only models present in opencode's own
-// favorites are reachable this way.
+// The TUI plugin API has no direct "set active model" call. But
+// `keymap.dispatch()` runs the same internal command as the native
+// favorite-cycle keybind, which updates the active model (and persists it to
+// <state>/model.json). So to switch to a target we cycle through opencode's
+// favorites, checking the live selection after each step, until we land on it.
+// Only models present in opencode's own favorites are reachable this way.
 
 import { readFileSync } from "node:fs"
+import { homedir } from "node:os"
+import path from "node:path"
 import { config } from "./config"
-import type { ModelRef, RcpApi } from "./types"
+import type { ModelRef, PluginContext } from "./types"
 import { delay } from "./util"
 
 export const sameModel = (a: ModelRef | undefined, b: ModelRef | undefined): boolean =>
   !!a && !!b && a.providerID === b.providerID && a.modelID === b.modelID
 
-const modelStatePath = (api: RcpApi): string => {
-  const stateDir = api.state?.path?.state ?? `${process.env.HOME}/.local/state/opencode`
-  return `${stateDir}/model.json`
+const modelStatePath = (): string => {
+  const stateDir = process.env.XDG_STATE_HOME ?? path.join(homedir(), ".local", "state")
+  return path.join(stateDir, "opencode", "model.json")
 }
 
 type ModelState = { recent: ModelRef[]; favorite: ModelRef[] }
 
 /** Read opencode's model.json (recent + favorites). Returns empty lists on any error. */
-export function readModelState(api: RcpApi): ModelState {
+export function readModelState(): ModelState {
   try {
-    const json = JSON.parse(readFileSync(modelStatePath(api), "utf8"))
+    const json = JSON.parse(readFileSync(modelStatePath(), "utf8"))
     return {
       recent: Array.isArray(json.recent) ? json.recent : [],
       favorite: Array.isArray(json.favorite) ? json.favorite : [],
@@ -35,38 +37,40 @@ export function readModelState(api: RcpApi): ModelState {
   }
 }
 
-/** The active model = most-recent entry in model.json. */
-export const activeModel = (api: RcpApi): ModelRef | undefined => readModelState(api).recent[0]
+/** The active model = the prompt's selected model (reactive in Solid computations). */
+export const activeModel = (context: PluginContext): ModelRef | undefined => {
+  const selection = context.ui.model.current()
+  return selection ? { providerID: selection.providerID, modelID: selection.modelID } : undefined
+}
 
-/** Run an internal TUI command by name (favorite-cycle, open native picker, …). */
-export function runCommand(api: RcpApi, value: string): void {
-  if (api.command?.trigger) api.command.trigger(value) // opencode <= 1.3
-  else api.keymap?.dispatchCommand?.(value) // opencode >= 1.4
+/** Run an internal TUI command by id (favorite-cycle, open native picker, …). */
+export function runCommand(context: PluginContext, id: string): void {
+  context.keymap.dispatch(id)
 }
 
 /** Favorites the native cycler will actually visit (it skips unknown provider/model pairs). */
-export function cyclableFavorites(api: RcpApi): ModelRef[] {
-  const providers = api.state?.provider ?? []
-  return readModelState(api).favorite.filter((fav) => {
-    const provider = providers.find((p) => p.id === fav.providerID)
-    return Boolean(provider?.models?.[fav.modelID])
-  })
+export function cyclableFavorites(context: PluginContext): ModelRef[] {
+  const location = context.location ?? context.data.location.default()
+  const models = context.data.location.model.list(location) ?? []
+  return readModelState().favorite.filter((fav) =>
+    models.some((model) => model.providerID === fav.providerID && model.modelID === fav.modelID),
+  )
 }
 
 /**
- * Poll model.json until recent[0] changes away from `previous` (the file is
- * written asynchronously, ~40-100ms after the command runs), or until timeout.
+ * Poll the live selection until it changes away from `previous` (the update
+ * lands a few frames after the command runs), or until timeout.
  */
 export async function waitForActiveChange(
-  api: RcpApi,
+  context: PluginContext,
   previous: ModelRef | undefined,
   timeoutMs = 800,
 ): Promise<ModelRef | undefined> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     await delay(40)
-    const current = activeModel(api)
+    const current = activeModel(context)
     if (current && !sameModel(current, previous)) return current
   }
-  return activeModel(api)
+  return activeModel(context)
 }

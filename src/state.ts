@@ -10,26 +10,21 @@ import {
   sameModel,
   waitForActiveChange,
 } from "./switching"
-import type { ModelRef, RcpApi, Readiness, Row } from "./types"
+import type { ModelRef, PluginContext, Readiness, Row } from "./types"
 
-export function createRcpState(api: RcpApi) {
+export function createRcpState(context: PluginContext) {
   const [rows, setRows] = createSignal<Row[]>([])
   const [note, setNote] = createSignal("loading…")
   const [readiness, setReadiness] = createSignal<Record<string, Readiness>>({})
-  const [current, setCurrent] = createSignal<string | undefined>(undefined) // active RCP model id
   const [switching, setSwitching] = createSignal<string | undefined>(undefined)
 
   const toast = (message: string, variant: "info" | "success" | "warning" | "error" = "info") =>
-    api.ui.toast({ message, variant, duration: 3000 })
+    context.ui.toast.show({ message, variant, duration: 3000 })
 
-  /** Resolve the active RCP model id from model.json, falling back to opencode.json. */
-  const refreshCurrent = () => {
-    const recent = activeModel(api)
-    if (recent?.providerID === config.providerId) return setCurrent(recent.modelID)
-
-    const configured = api.state?.config?.model ?? ""
-    const prefix = `${config.providerId}/`
-    setCurrent(configured.startsWith(prefix) ? configured.slice(prefix.length) : undefined)
+  /** The active RCP model id, when the prompt's selection is an RCP model (reactive). */
+  const current = (): string | undefined => {
+    const active = activeModel(context)
+    return active?.providerID === config.providerId ? active.modelID : undefined
   }
 
   const loadCatalog = async () => {
@@ -40,7 +35,6 @@ export function createRcpState(api: RcpApi) {
     } else {
       setNote(result.reason)
     }
-    refreshCurrent()
   }
 
   let probing = false
@@ -61,8 +55,8 @@ export function createRcpState(api: RcpApi) {
   }
 
   /**
-   * Switch the active model by cycling opencode's favorite ring until model.json's
-   * recent[0] matches the target. Models not in opencode's favorites can't be
+   * Switch the active model by cycling opencode's favorite ring until the live
+   * selection matches the target. Models not in opencode's favorites can't be
    * reached this way, so we open the native picker for those instead.
    */
   const switchTo = async (name: string) => {
@@ -70,28 +64,26 @@ export function createRcpState(api: RcpApi) {
     if (current() === name) return void toast(`${shortName(name)} déjà actif`)
 
     const target: ModelRef = { providerID: config.providerId, modelID: name }
-    const ring = cyclableFavorites(api)
+    const ring = cyclableFavorites(context)
     if (!ring.some((fav) => sameModel(fav, target))) {
       toast(`${shortName(name)} n'est pas dans les favoris opencode — ajoute-le via le picker`, "warning")
-      runCommand(api, "model.list")
+      runCommand(context, "model.list")
       return
     }
 
     setSwitching(name)
     try {
-      let previous = activeModel(api)
+      let previous = activeModel(context)
       // One extra step so we can visit every favorite before giving up.
       for (let step = 0; step <= ring.length; step++) {
-        runCommand(api, "model.cycle_favorite")
-        const active = await waitForActiveChange(api, previous)
+        runCommand(context, "model.cycle_favorite")
+        const active = await waitForActiveChange(context, previous)
         if (sameModel(active, target)) {
-          setCurrent(name)
           return void toast(`Modèle → ${shortName(name)}`, "success")
         }
         previous = active
       }
       toast(`Impossible de basculer sur ${shortName(name)}`, "error")
-      refreshCurrent()
     } finally {
       setSwitching(undefined)
     }

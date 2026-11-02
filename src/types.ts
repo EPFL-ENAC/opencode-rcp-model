@@ -1,5 +1,7 @@
 // Shared types used across the plugin.
 
+import type { Plugin } from "@opencode/plugin/tui"
+
 export type Pool = "basic" | "premium" | "unknown"
 
 export type Readiness = "warm" | "cold" | "checking" | "unknown"
@@ -27,27 +29,7 @@ export type CatalogResult =
 export type ModelRef = { providerID: string; modelID: string }
 
 /**
- * The subset of the (otherwise loosely-typed) TUI plugin API that this plugin
- * relies on. Declaring it here documents our contract with the host in one place
- * and lets the rest of the code stay free of `any`.
+ * The OpenCode V2 TUI plugin context. Declaring it here documents our contract
+ * with the host in one place and keeps the rest of the code free of `any`.
  */
-export type RcpApi = {
-  state?: {
-    path?: { state?: string }
-    provider?: Array<{ id: string; models?: Record<string, unknown> }>
-    config?: { model?: string }
-  }
-  command?: {
-    trigger?: (value: string) => void
-    register?: (factory: () => unknown[]) => void
-  }
-  keymap?: { dispatchCommand?: (value: string) => void }
-  ui: {
-    DialogSelect: (props: unknown) => unknown
-    dialog: { replace: (factory: () => unknown) => void; clear: () => void }
-    toast: (opts: { message: string; variant?: string; duration?: number }) => void
-  }
-  theme: { current: Record<string, string> }
-  slots: { register: (plugin: unknown) => void }
-  lifecycle?: { onDispose?: (fn: () => void) => void }
-}
+export type PluginContext = Plugin.Context
