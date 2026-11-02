@@ -1,6 +1,6 @@
 {
   "name": "opencode-rcp-status",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "OpenCode TUI plugin for EPFL RCP AIaaS models: sidebar widget + /rcpmodel picker with readiness, pool, price, and one-click switch.",
   "type": "module",
   "exports": {
@@ -20,19 +20,23 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/EPFL-ENAC/opencode-rcp-status.git"
+    "url": "https://github.com/EPFL-ENAC/opencode-rcp-model.git"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build": "bun build ./tui.tsx --external '@opencode-ai/*' --external '@opentui/*' --external 'solid-js' --external 'solid-js/*' --external 'node:*' --outfile /dev/null"
+    "build": "bun build ./tui.tsx --external '@opencode/*' --external '@opentui/*' --external 'solid-js' --external 'solid-js/*' --external 'node:*' --outfile /dev/null"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.4.3",
-    "@opentui/core": "^0.2.2",
-    "@opentui/solid": "^0.2.2",
-    "solid-js": "^1.9.12"
+    "@opencode/plugin": "^2.2.3",
+    "fuzzysort": "^3.1.0"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.8.0",
+    "@opentui/solid": ">=0.8.0",
+    "solid-js": ">=1.9.0"
   },
   "devDependencies": {
+    "@opencode/theme": "2.2.3",
     "@types/bun": "^1.1.0",
     "typescript": "^5.6.0"
   }
